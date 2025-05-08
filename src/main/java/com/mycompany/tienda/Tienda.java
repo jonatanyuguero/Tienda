@@ -3,8 +3,20 @@
  */
 package com.mycompany.tienda;
 
+import java.io.BufferedWriter;
+import java.io.EOFException;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.InputMismatchException;
 import java.util.List;
@@ -43,7 +55,7 @@ public class Tienda {
         Tienda t = new Tienda();
         t.cargaDatos();
     }
-
+    //<editor-fold defaultstate="collapsed" desc="MENÚS">
     private void menu() {
 
         int opcion = 0;
@@ -159,6 +171,10 @@ public class Tienda {
                     break;
                 case 6:
                     backupPorSeccion();
+
+                    break;
+                case 7:
+                    leerArchivosSeccion();
                     break;
             }
         } while (opcion != 9);
@@ -210,6 +226,8 @@ public class Tienda {
     }
 
     //</editor-fold>
+    
+    //<editor-fold defaultstate="collapsed" desc="GESTIÓN DE PEDIDOS">
     public void stock(String id, int unidadesPed) throws StockAgotado, StockInsuficiente {
         int n = articulos.get(id).getExistencias();
         if (n == 0) {
@@ -330,68 +348,469 @@ public class Tienda {
     }
 
     private void modificarPedido() {
+        Scanner sc = new Scanner(System.in);
+        System.out.print("Introduce el ID del pedido a modificar: ");
+        String id = sc.next();
+        Pedido pedidoToModify = null;
+        for (Pedido p : pedidos) {
+            if (p.getIdPedido().equalsIgnoreCase(id)) {
+                pedidoToModify = p;
+                break;
+            }
+        }
+        if (pedidoToModify == null) {
+            System.out.println("Pedido no encontrado.");
+            return;
+        }
+        System.out.println("Pedido encontrado:");
+        System.out.println(pedidoToModify);
+        System.out.print("¿Desea agregar una nueva línea de pedido? (S/N): ");
+        String opc = sc.next();
+        if (opc.equalsIgnoreCase("S")) {
+            System.out.print("Introduce el código del artículo: ");
+            String idArticulo = sc.next();
+            if (!articulos.containsKey(idArticulo)) {
+                System.out.println("Artículo no encontrado.");
+                return;
+            }
+            System.out.print("Introduce el número de unidades: ");
+            int unidades = sc.nextInt();
+            try {
+                stock(idArticulo, unidades);
+                pedidoToModify.getCestaCompra().add(new LineaPedido(idArticulo, unidades));
+                // Se descuenta el stock
+                Articulo art = articulos.get(idArticulo);
+                art.setExistencias(art.getExistencias() - unidades);
+                System.out.println("Línea agregada al pedido.");
+            } catch (StockAgotado | StockInsuficiente e) {
+                System.out.println(e.getMessage());
+            }
+        }
 
+    }
+
+    private double totalPedido(Pedido p) {
+        double total = 0;
+        for (LineaPedido L : p.getCestaCompra()) {
+
+            total += (articulos.get(L.getIdArticulo()).getPvp())
+                    * L.getUnidades();
+        }
+        return total;
     }
 
     private void listadoPedidos() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        System.out.println("Como desea ver los pedidos");
+        int opcion = 0;
+        do {
+            System.out.println("\t\t\t\t1 - IMPORTE TOTAL");
+            System.out.println("\t\t\t\t2 - POR FECHA");
+            System.out.println("\t\t\t\t3 - IMPORTE QUE SE SOLICITA POR TECLADO");
+            System.out.println("\t\t\t\t4 - SALIR");
+            try {
+                opcion = sc.nextInt();
+            } catch (InputMismatchException e) {
+                System.out.println("Introduce un número válido.");
+                sc.nextLine();
+                continue;
+            }
+            switch (opcion) {
+                case 1:
+                    pedidos.stream().sorted(Comparator.comparing(p -> totalPedido(p))).forEach(p -> System.out.println(p + "\t - IMPORTE TOTAL: " + totalPedido(p) + " Euro"));
+                    break;
+                case 2:
+                    pedidos.stream().sorted(Comparator.comparing(Pedido::getFechaPedido)).forEach(p -> System.out.println("El pedido fue efectuado en la siguiente fecha: " + p.getFechaPedido() + " y el ID del pedido es: " + p.getIdPedido()));
+                    break;
+                case 3:
+                    System.out.println("Introduce el importe minimo");
+                    Double importe = sc.nextDouble();
+                    pedidos.stream().filter(p -> totalPedido(p) > importe).forEach(p -> System.out.println("El cliente " + p.getClientePedido().getNombre() + " Compro " + p.getCestaCompra() + " IMPORTE TOTAL " + totalPedido(p) + " Euros"));
+
+                    break;
+            }
+        } while (opcion != 4);
     }
 
     private void pedidosPorImporteBackup() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        try (ObjectOutputStream oosPedidosImporte = new ObjectOutputStream(new FileOutputStream("pedidosPorImporte.dat"))) {
+            // Ordenamos los pedidos por importe total (de mayor a menor)
+            List<Pedido> pedidosOrdenados = new ArrayList<>(pedidos);
+            pedidosOrdenados.sort((p1, p2) -> Double.compare(totalPedido(p2), totalPedido(p1)));
+
+            // Guardamos cada pedido en el archivo
+            for (Pedido p : pedidosOrdenados) {
+                oosPedidosImporte.writeObject(p);
+            }
+
+            System.out.println("Copia de seguridad de pedidos por importe realizada con exito.");
+        } catch (FileNotFoundException e) {
+            System.out.println(e.toString());
+        } catch (IOException e) {
+            System.out.println(e.toString());
+        }
     }
 
     private void leerPedidosPorImporte() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
-    }
+        List<Pedido> pedidosImporte = new ArrayList<>();
 
+        try (ObjectInputStream oisPedidosImporte = new ObjectInputStream(new FileInputStream("pedidosPorImporte.dat"))) {
+            Pedido p;
+            while ((p = (Pedido) oisPedidosImporte.readObject()) != null) {
+                pedidosImporte.add(p);
+            }
+        } catch (FileNotFoundException e) {
+            System.out.println("Archivo no encontrado: " + e.toString());
+        } catch (EOFException e) {
+            // Fin del archivo alcanzado (comportamiento normal)
+        } catch (ClassNotFoundException | IOException e) {
+            System.out.println(e.toString());
+        }
+
+        // Mostramos los pedidos recuperados con su importe
+        System.out.println("PEDIDOS ORDENADOS POR IMPORTE:");
+        System.out.println("ID_PEDIDO\tCLIENTE\tFECHA\tIMPORTE");
+        for (Pedido p : pedidosImporte) {
+            System.out.println("ID: " + p.getIdPedido()
+                    + ", Cliente: " + p.getClientePedido().getNombre()
+                    + ", Fecha: " + p.getFechaPedido()
+                    + ", Total: " + totalPedido(p));
+        }
+    }
+    //</editor-fold>
+
+    //<editor-fold defaultstate="collapsed" desc="GESTIÓN DE ARTICULOS">
     private void nuevoArticulo() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        String id, descripcion;
+        int existencias;
+        double precio;
+
+        do {
+            System.out.print("Ingrese el ID del artículo: ");
+            id = sc.nextLine();
+            if (articulos.containsKey(id)) {
+                System.out.println("El ID ya existe. Intente con otro.");
+                return;
+            }
+        } while (id.isEmpty());
+
+        System.out.print("Ingrese la descripción del artículo: ");
+        descripcion = sc.nextLine();
+
+        do {
+            System.out.print("Ingrese la cantidad en stock: ");
+            while (!sc.hasNextInt()) {
+                System.out.println("Por favor, introduzca un número válido.");
+                sc.next();
+            }
+            existencias = sc.nextInt();
+        } while (existencias < 0);
+
+        do {
+            System.out.print("Ingrese el precio: ");
+            while (!sc.hasNextDouble()) {
+                System.out.println("Por favor, introduzca un precio válido.");
+                sc.next();
+            }
+            precio = sc.nextDouble();
+        } while (precio <= 0);
+
+        Articulo a = new Articulo(id, descripcion, existencias, precio);
+        articulos.put(id, a);
+        System.out.println("Artículo añadido correctamente.");
     }
 
     private void modificarArticulo() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        Scanner sc = new Scanner(System.in);
+        System.out.print("Introduce el código del artículo a modificar: ");
+        String id = sc.next();
+        if (!articulos.containsKey(id)) {
+            System.out.println("El artículo no existe.");
+            return;
+        }
+        Articulo art = articulos.get(id);
+        System.out.println("Artículo actual: " + art);
+        sc.nextLine(); // limpiar buffer
+        System.out.print("Introduce la nueva descripción (dejar en blanco para no cambiar): ");
+        String descripcion = sc.nextLine();
+        if (!descripcion.isBlank()) {
+            art.setDescripcion(descripcion);
+        }
+        System.out.print("Introduce las nuevas existencias (o -1 para no cambiar): ");
+        int existencias = sc.nextInt();
+        if (existencias != -1) {
+            art.setExistencias(existencias);
+        }
+        System.out.print("Introduce el nuevo precio (o -1 para no cambiar): ");
+        double precio = sc.nextDouble();
+        if (precio != -1) {
+            art.setPvp(precio);
+        }
+        System.out.println("Artículo modificado.");
     }
 
     private void eliminarArticulo() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        Scanner sc = new Scanner(System.in);
+        System.out.print("Introduce el codigo del articulo a eliminar: ");
+        String id = sc.next();
+        if (!articulos.containsKey(id)) {
+            System.out.println("El articulo no existe.");
+            return;
+        }
+        articulos.remove(id);
+        System.out.println("Articulo eliminado.");
     }
 
     private void listadoArticulos() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        ArrayList<Articulo> articulosAux = new ArrayList(articulos.values());
+        Collections.sort(articulosAux);
+        for (Articulo a : articulosAux) {
+            System.out.println(a);
+        }
+
+        System.out.println("");
+        System.out.println("AL REVÉS");
+        System.out.println("");
+
+        Collections.reverse(articulosAux);
+        for (Articulo a : articulosAux) {
+            System.out.println(a);
+        }
+
+        System.out.println("");
+        System.out.println("ORDENADO POR PRECIO");
+        System.out.println("");
+
+        Collections.sort(articulosAux, new ComparaArticulosPorPrecio());
+        for (Articulo a : articulosAux) {
+            System.out.println(a);
+        }
+
+        System.out.println("");
+        System.out.println("ORDENADO POR EXISTENCIAS");
+        System.out.println("");
+
+        Collections.sort(articulosAux, new ComparaArticulosPorExistencias());
+        for (Articulo a : articulosAux) {
+            System.out.println(a);
+        }
+
+        System.out.println("");
+
+        articulos.values().stream().sorted().forEach(System.out::println);
+        System.out.println("");
+        articulos.values().stream().sorted(new ComparaArticulosPorExistencias()).forEach(System.out::println);
+        System.out.println("");
+        articulos.values().stream().sorted(new ComparaArticulosPorPrecio()).forEach(System.out::println);
+
+        System.out.println("");
+    }
+
+    private int cantidadTotalVendida(String idArticulo) {
+        return pedidos.stream().flatMap(p -> p.getCestaCompra().stream()).filter(lp -> lp.getIdArticulo().equals(idArticulo)).mapToInt(LineaPedido::getUnidades).sum();
+    }
+
+    private void listarArticulosPorDemanda() {
+        articulos.values().stream()
+                .sorted(Comparator.comparing(a -> cantidadTotalVendida(a.getIdArticulo()), Comparator.reverseOrder()))
+                .forEach(a -> System.out.println(a + " \t - el número de artículos vendidos es: " + cantidadTotalVendida(a.getIdArticulo())));
     }
 
     private void reponerArticulos() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        System.out.println("Introduce el codigo del articulo a reponer");
+        String id = sc.next();
+        if (!articulos.containsKey(id)) {
+            System.out.println("El articulo no existe");
+            return;
+        }
+        int existencias = articulos.get(id).getExistencias();
+        System.out.println("La cantidad es actual de existencias es : " + existencias + " unidades.");
+        System.out.println("Cuantas unidades desea reponer?");
+        int reponer = sc.nextInt();
+        System.out.println("Articulos anadidos");
+        articulos.get(id).setExistencias(existencias + reponer);
+        System.out.println("La cantidad se ha actualizado a " + articulos.get(id).getExistencias());
+    }
+
+    private void leerArchivosSeccion() {
+        System.out.println("Teclea la sección de los artículos que quieres recuperar");
+        System.out.println("1 - PERIFERICOS");
+        System.out.println("2 - ALMACENAMIENTO");
+        System.out.println("3 - IMPRESORAS");
+        System.out.println("4 - MONITORES");
+        System.out.println("5 - TODOS");
+        String id = sc.next();
+        ArrayList<Articulo> articulosAux = new ArrayList();
+        Articulo a;
+
+        try (ObjectInputStream oisArticulos = new ObjectInputStream(new FileInputStream("articulos.dat"))) {
+            while ((a = (Articulo) oisArticulos.readObject()) != null) {
+                if (id.equals("5")) {
+                    articulosAux.add(a);
+                } else if (a.getIdArticulo().startsWith(id)) {
+                    articulosAux.add(a);
+                }
+            }
+        } catch (FileNotFoundException e) {
+            System.out.println(e.toString());
+
+        } catch (EOFException e) {
+
+        } catch (ClassNotFoundException | IOException e) {
+            System.out.println(e.toString());
+        }
+        articulosAux.forEach(System.out::println);
     }
 
     private void backupPorSeccion() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
-    }
+        System.out.println("Teclea la sección de la que quiere hacer una copia de seguridad =)");
+        System.out.println("1 - PERIFERICOS");
+        System.out.println("2 - ALMACENAMIENTO");
+        System.out.println("3 - IMPRESORAS");
+        System.out.println("4 - MONITORES");
+        System.out.println("5 - TODOS");
+        String id = sc.next();
 
+        try (ObjectOutputStream oosPerifericos = new ObjectOutputStream(new FileOutputStream("perifericos.dat")); ObjectOutputStream oosAlmacenamiento = new ObjectOutputStream(new FileOutputStream("almacenamiento.dat")); ObjectOutputStream oosImpresoras = new ObjectOutputStream(new FileOutputStream("impresoras.dat")); ObjectOutputStream oosMonitores = new ObjectOutputStream(new FileOutputStream("monitores.dat"))) {
+
+            for (Articulo a : articulos.values()) {
+                char seccion = a.getIdArticulo().charAt(0);
+                switch (seccion) {
+                    case '1':
+                        oosPerifericos.writeObject(a);
+                        break;
+                    case '2':
+                        oosAlmacenamiento.writeObject(a);
+                        break;
+                    case '3':
+                        oosImpresoras.writeObject(a);
+                        break;
+                    case '4':
+                        oosMonitores.writeObject(a);
+                        break;
+                }
+            }
+
+            System.out.println("Copia de seguridad realizada con éxito =)");
+        } catch (FileNotFoundException e) {
+            System.out.println(e.toString());
+        } catch (IOException e) {
+            System.out.println(e.toString());
+        }
+
+    }
+    //</editor-fold>
+
+    //<editor-fold defaultstate="collapsed" desc="GESTIÓN DE CLIENTES">
     private void nuevoCliente() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        String dni, nombre, telefono, email;
+
+        do {
+            System.out.print("Deme su DNI: ");
+            dni = sc.nextLine().toUpperCase();
+            if (!MetodosAux.validarDni(dni)) {
+                System.out.println("DNI no válido. Inténtelo de nuevo.");
+            } else if (clientes.containsKey(dni)) {
+                System.out.println("Ese cliente ya existe. Intente con otro DNI.");
+                return;
+            }
+        } while (!MetodosAux.validarDni(dni));
+
+        System.out.print("Deme su NOMBRE: ");
+        nombre = sc.nextLine();
+
+        do {
+            System.out.print("Deme su TELÉFONO: ");
+            telefono = sc.nextLine();
+            if (!telefono.matches("\\d{9}")) {
+                System.out.println("Número de teléfono no válido. Debe tener 9 dígitos.");
+            }
+        } while (!telefono.matches("\\d{9}"));
+
+        do {
+            System.out.print("Deme su EMAIL: ");
+            email = sc.nextLine();
+            if (!email.matches("^[A-Za-z0-9+_.-]+@(.+)$")) {
+                System.out.println("Correo electrónico no válido. Inténtelo de nuevo.");
+            }
+        } while (!email.matches("^[A-Za-z0-9+_.-]+@(.+)$"));
+
+        Cliente c = new Cliente(dni, nombre, telefono, email);
+        clientes.put(dni, c);
+        System.out.println("Cliente añadido correctamente.");
     }
 
     private void modificarCliente() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        System.out.print("Introduce el DNI del cliente a modificar: ");
+        String dni = sc.next().toUpperCase();
+        if (!clientes.containsKey(dni)) {
+            System.out.println("El cliente no existe.");
+            return;
+        }
+        Cliente cliente = clientes.get(dni);
+        System.out.println("Cliente actual: " + cliente);
+        sc.nextLine(); // limpiar buffer
+
+        System.out.print("Introduce el nuevo teléfono (dejar en blanco para no cambiar): ");
+        String telefono = sc.nextLine();
+        if (!telefono.isBlank()) {
+            cliente.setTelefono(telefono);
+        }
+        System.out.print("Introduce el nuevo email (dejar en blanco para no cambiar): ");
+        String email = sc.nextLine();
+        if (!email.isBlank()) {
+            cliente.setEmail(email);
+        }
+        System.out.println("Cliente modificado.");
     }
 
     private void eliminarCliente() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        System.out.print("Introduce el DNI del cliente a eliminar: ");
+        String dni = sc.next().toUpperCase();
+        if (!clientes.containsKey(dni)) {
+            System.out.println("El cliente no existe.");
+            return;
+        }
+        clientes.remove(dni);
+        System.out.println("Cliente eliminado.");
     }
 
     private void listadoClientes() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        System.out.println("Listado de Clientes:");
+        for (Cliente c : clientes.values()) {
+            System.out.println(c);
+        }
     }
 
     private void clientesTxtBackup() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        try (BufferedWriter bfwClientes = new BufferedWriter(new FileWriter("clientes.csv"))) {
+            for (Cliente c : clientes.values()) {
+                bfwClientes.write(c.getDni() + "," + c.getNombre() + "," + c.getTelefono() + "," + c.getEmail() + "\n");
+            }
+            System.out.println("Backup realizado con exito");
+        } catch (FileNotFoundException e) {
+            System.out.println("lanzo exception " + e.toString());
+        } catch (IOException e) {
+            System.out.println("lanzo exception " + e.toString());
+        }
     }
 
     private void clientesTxtLeer() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        // LEEMOS LOS CLIENTES DESDE EL ARCHIVO .csv A UNA COLECCION HASHMAP AUXILIAR Y LA IMPRIMIMOS
+        HashMap<String, Cliente> clientesAux = new HashMap();
+        File file = new File("clientes.csv");
+        try (Scanner scClientes = new Scanner(file)) {
+            while (scClientes.hasNextLine()) {
+                String[] atributos = scClientes.nextLine().split("[,]");
+                Cliente c = new Cliente(atributos[0], atributos[1], atributos[2], atributos[3]);
+                clientesAux.put(atributos[0], c);
+            }
+        } catch (IOException e) {
+            System.out.println(e.toString());
+        }
+        clientesAux.values().forEach(System.out::println);
     }
+    
+    //</editor-fold>
 
     //<editor-fold defaultstate="collapsed" desc="OTROS MÉTODOS">
     public void cargaDatos() {
